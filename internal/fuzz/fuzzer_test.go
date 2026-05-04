@@ -94,7 +94,7 @@ func TestCorpusManagement(t *testing.T) {
 	}
 
 	// Add to corpus
-	added := fuzzer.addToCorpus(context.Background(), input)
+	added := fuzzer.addToCorpus(context.Background(), input, nil)
 	assert.False(t, added) // Coverage tracking disabled
 
 	// Get corpus
@@ -116,7 +116,7 @@ func TestCrashTracking(t *testing.T) {
 	crashingInput := &simulator.FuzzerInput{
 		EnvelopeXdr: "crash_input",
 	}
-	result := fuzzer.executeInput(context.Background(), crashingInput)
+	result, _ := fuzzer.executeInput(context.Background(), crashingInput)
 
 	// Mock runner will return a response, so this won't crash in test
 	assert.NotNil(t, result)
@@ -203,7 +203,7 @@ func TestGetCorpus(t *testing.T) {
 	input := &simulator.FuzzerInput{
 		EnvelopeXdr: "test123",
 	}
-	fuzzer.addToCorpus(context.Background(), input)
+	fuzzer.addToCorpus(context.Background(), input, nil)
 
 	corpus := fuzzer.GetCorpus()
 	assert.NotEmpty(t, corpus)
@@ -229,9 +229,30 @@ func TestExecuteInput(t *testing.T) {
 		EnvelopeXdr: "test_envelope",
 	}
 
-	result := fuzzer.executeInput(context.Background(), input)
+	result, coverage := fuzzer.executeInput(context.Background(), input)
 	assert.NotNil(t, result)
 	assert.GreaterOrEqual(t, result.ExecutionTimeMs, uint64(0))
+	assert.NotNil(t, coverage)
+}
+
+func TestExecuteInputWithCoverage(t *testing.T) {
+	runner := simulator.NewMockRunner(func(ctx context.Context, req *simulator.SimulationRequest) (*simulator.SimulationResponse, error) {
+		assert.True(t, req.EnableCoverage)
+		return &simulator.SimulationResponse{
+			Status:     "success",
+			LCOVReport: "TN:\nSF:/tmp/contract.wasm\nDA:10,1\nDA:11,0\nDA:20,2\nend_of_record\n",
+		}, nil
+	})
+	fuzzer := NewCoverageGuidedFuzzer(runner, FuzzerConfig{EnableCoverage: true})
+
+	input := &simulator.FuzzerInput{EnvelopeXdr: "test_envelope"}
+	result, coverage := fuzzer.executeInput(context.Background(), input)
+
+	assert.NotNil(t, result)
+	assert.Equal(t, uint32(2), result.CodeCoverage)
+	assert.NotNil(t, coverage)
+	assert.Equal(t, uint32(2), coverage.totalCoverage)
+	assert.Len(t, coverage.coveredLines, 2)
 }
 
 // TestContextCancellation tests behavior when context is cancelled
@@ -302,7 +323,7 @@ func BenchmarkCorpusSelection(b *testing.B) {
 		input := &simulator.FuzzerInput{
 			EnvelopeXdr: hex.EncodeToString([]byte{byte(i)}),
 		}
-		fuzzer.addToCorpus(context.Background(), input)
+		fuzzer.addToCorpus(context.Background(), input, nil)
 	}
 
 	b.ResetTimer()

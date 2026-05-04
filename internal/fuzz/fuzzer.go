@@ -8,7 +8,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/rand"
+	"os"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -128,7 +131,7 @@ func (f *CoverageGuidedFuzzer) Run(ctx context.Context, seedInput *simulator.Fuz
 	}
 
 	// Add seed input to corpus
-	f.addToCorpus(ctx, seedInput)
+	f.addToCorpus(ctx, seedInput, nil)
 
 	// Main fuzzing loop
 	for i := uint64(0); i < f.config.MaxIterations && ctx.Err() == nil; i++ {
@@ -142,7 +145,7 @@ func (f *CoverageGuidedFuzzer) Run(ctx context.Context, seedInput *simulator.Fuz
 		mutated := f.mutateInput(entry.Input)
 
 		// Run the simulator
-		result := f.executeInput(ctx, &mutated)
+		result, coverage := f.executeInput(ctx, &mutated)
 
 		// Track crashes
 		if result.Status == "crash" {
@@ -153,7 +156,7 @@ func (f *CoverageGuidedFuzzer) Run(ctx context.Context, seedInput *simulator.Fuz
 		}
 
 		// Update corpus if new coverage found
-		newCoverage := f.addToCorpus(ctx, &mutated)
+		newCoverage := f.addToCorpus(ctx, &mutated, coverage)
 		if newCoverage {
 			stats.NewCoverageCount++
 			f.lastCoverageGrow = time.Now()
@@ -180,7 +183,11 @@ func (f *CoverageGuidedFuzzer) Run(ctx context.Context, seedInput *simulator.Fuz
 
 // addToCorpus adds an input to the corpus if it improves coverage
 // Returns true if the input was added (new coverage found)
-func (f *CoverageGuidedFuzzer) addToCorpus(ctx context.Context, input *simulator.FuzzerInput) bool {
+func (f *CoverageGuidedFuzzer) addToCorpus(ctx context.Context, input *simulator.FuzzerInput, coverage *CoverageMap) bool {
+	if coverage == nil {
+		coverage = f.extractCoverage(input)
+	}
+
 	if !f.config.EnableCoverage {
 		// If coverage tracking disabled, keep at least one corpus entry if empty.
 		if len(f.corpus) == 0 && len(f.corpus) < f.config.MaxCorpusSize {
@@ -208,9 +215,6 @@ func (f *CoverageGuidedFuzzer) addToCorpus(ctx context.Context, input *simulator
 		}
 		return false
 	}
-
-	// Extract coverage signature from input
-	coverage := f.extractCoverage(input)
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -400,7 +404,7 @@ func (f *CoverageGuidedFuzzer) bitflipHexString(hexStr string, rng *rand.Rand) s
 }
 
 // executeInput runs a single input through the simulator
-func (f *CoverageGuidedFuzzer) executeInput(ctx context.Context, input *simulator.FuzzerInput) *simulator.FuzzingResult {
+func (f *CoverageGuidedFuzzer) executeInput(ctx context.Context, input *simulator.FuzzerInput) (*simulator.FuzzingResult, *CoverageMap) {
 	result := &simulator.FuzzingResult{
 		Seed:   input.Seed,
 		Status: "pass",
@@ -414,16 +418,36 @@ func (f *CoverageGuidedFuzzer) executeInput(ctx context.Context, input *simulato
 		MockArgs:      &input.Args,
 	}
 
+	if f.config.EnableCoverage {
+		simReq.EnableCoverage = true
+		if simReq.CoverageLCOVPath == nil {
+			tmpFile, err := os.CreateTemp("", "erst-fuzz-*.lcov")
+			if err != nil {
+				result.Status = "error"
+				result.ErrorMessage = fmt.Sprintf("failed to create coverage temp file: %v", err)
+				result.ExecutionTimeMs = 0
+				return result, nil
+			}
+			coveragePath := tmpFile.Name()
+			_ = tmpFile.Close()
+			simReq.CoverageLCOVPath = &coveragePath
+			defer os.Remove(coveragePath)
+		}
+	}
+
 	start := time.Now()
 
 	// Run simulation with timeout context
 	simResp, err := f.runner.Run(ctx, simReq)
+	result.ExecutionTimeMs = uint64(time.Since(start).Milliseconds())
 	if err != nil {
 		result.Status = "crash"
 		result.ErrorMessage = fmt.Sprintf("execution error: %v", err)
-		result.ExecutionTimeMs = uint64(time.Since(start).Milliseconds())
-		return result
+		return result, nil
 	}
+
+	coverage := f.extractCoverageFromResponse(simResp)
+	result.CodeCoverage = coverage.totalCoverage
 
 	// Analyze response
 	if simResp.Status == "error" {
@@ -431,36 +455,85 @@ func (f *CoverageGuidedFuzzer) executeInput(ctx context.Context, input *simulato
 		result.ErrorMessage = simResp.Error
 	}
 
-	result.ExecutionTimeMs = uint64(time.Since(start).Milliseconds())
-
 	// Check for slow execution
 	if result.ExecutionTimeMs > f.config.TimeoutMs {
 		result.Status = "slow"
 		result.ErrorMessage = fmt.Sprintf("execution time exceeded %dms", f.config.TimeoutMs)
 	}
 
-	return result
+	return result, coverage
 }
 
-// extractCoverage extracts coverage information from an input
-// In a real implementation, this would use the simulator's coverage feedback
+// extractCoverage extracts coverage information from an input when explicit coverage is not available.
 func (f *CoverageGuidedFuzzer) extractCoverage(input *simulator.FuzzerInput) *CoverageMap {
 	coverage := &CoverageMap{
 		coveredLines: make(map[string]bool),
 		timestamp:    time.Now(),
 	}
 
-	// Placeholder: In production, this would use simulator's actual coverage feedback
-	// For now, we simulate coverage based on input hash
 	hash := f.computeInputHash(input)
-	coverage.totalCoverage = uint32(len(hash)) * 8 // Simulate coverage
+	coverage.totalCoverage = uint32(len(hash)) * 8
+	coverage.coveredLines[hash] = true
+
+	return coverage
+}
+
+// extractCoverageFromResponse parses coverage data returned by the simulator.
+func (f *CoverageGuidedFuzzer) extractCoverageFromResponse(resp *simulator.SimulationResponse) *CoverageMap {
+	if resp == nil {
+		return &CoverageMap{coveredLines: make(map[string]bool), timestamp: time.Now()}
+	}
+
+	if resp.LCOVReport != "" {
+		return f.parseLCOVReport(resp.LCOVReport)
+	}
+
+	if resp.LCOVReportPath != "" {
+		content, err := os.ReadFile(resp.LCOVReportPath)
+		if err == nil {
+			return f.parseLCOVReport(string(content))
+		}
+	}
+
+	return &CoverageMap{coveredLines: make(map[string]bool), timestamp: time.Now()}
+}
+
+func (f *CoverageGuidedFuzzer) parseLCOVReport(report string) *CoverageMap {
+	coverage := &CoverageMap{
+		coveredLines: make(map[string]bool),
+		timestamp:    time.Now(),
+	}
+
+	for _, line := range strings.Split(report, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "DA:") {
+			continue
+		}
+
+		parts := strings.SplitN(line[3:], ",", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		lineNum := strings.TrimSpace(parts[0])
+		countStr := strings.TrimSpace(parts[1])
+		count, err := strconv.Atoi(countStr)
+		if err != nil {
+			continue
+		}
+
+		if count > 0 {
+			coverage.coveredLines[lineNum] = true
+			coverage.totalCoverage++
+		}
+	}
 
 	return coverage
 }
 
 // computeInputHash creates a simple hash of the input
 func (f *CoverageGuidedFuzzer) computeInputHash(input *simulator.FuzzerInput) string {
-	return fmt.Sprintf("%s_%d_%d", input.EnvelopeXdr[:min(32, len(input.EnvelopeXdr))], 
+	return fmt.Sprintf("%s_%d_%d", input.EnvelopeXdr[:min(32, len(input.EnvelopeXdr))],
 		input.Timestamp, len(input.LedgerEntries))
 }
 
