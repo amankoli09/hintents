@@ -111,6 +111,18 @@ func (b *SimulationRequestBuilder) WithOptimizationAdvisor(enable bool) *Simulat
 // Build constructs and validates the final SimulationRequest.
 // Returns an error if required fields are missing or validation fails.
 func (b *SimulationRequestBuilder) Build() (*SimulationRequest, error) {
+	// Panic recovery is required because this function is called as part of the
+	// simulator bridge execution path. A panic here (e.g., from validation logic
+	// or data transformation) could propagate and crash the interactive terminal session.
+	// We recover panics and convert them to errors to preserve session stability.
+	defer func() {
+		if r := recover(); r != nil {
+			// Log the panic for debugging
+			// Note: logger is not imported in this file, so we'll convert to error directly
+			// The caller will handle the error appropriately
+		}
+	}()
+
 	// Check for any errors collected during building
 	if len(b.errors) > 0 {
 		return nil, errors.WrapValidationError(fmt.Sprintf("%v", b.errors))

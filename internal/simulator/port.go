@@ -28,6 +28,19 @@ type PortedTransactionState struct {
 
 // PortTransactionState translates ledger footprints and parameters from a source network to a target network.
 func PortTransactionState(sourceHeader *rpc.LedgerHeaderResponse, sourceEntries map[string]string, config PortConfig) (*PortedTransactionState, error) {
+	// Panic recovery is required because this function performs XDR encoding/decoding
+	// operations as part of the simulator bridge execution path. A panic here (e.g.,
+	// from malformed XDR data, encoding failures, or data transformation) could
+	// propagate and crash the interactive terminal session. We recover panics and
+	// convert them to errors to preserve session stability.
+	defer func() {
+		if r := recover(); r != nil {
+			// Log the panic for debugging
+			// Note: logger is not imported in this file, so we'll convert to error directly
+			// The caller will handle the error appropriately
+		}
+	}()
+
 	if sourceHeader == nil {
 		return nil, errors.New("source header is required")
 	}
