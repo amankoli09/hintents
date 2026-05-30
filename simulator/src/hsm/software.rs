@@ -7,7 +7,6 @@ use super::{PublicKey, Signature, Signer, SignerError, SignerInfo, SoftwareSigne
 use async_trait::async_trait;
 use ed25519_dalek::pkcs8::DecodePrivateKey;
 use ed25519_dalek::{Signer as EdSigner, SigningKey, VerifyingKey};
-use k256::pkcs8::DecodePrivateKey as _;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
