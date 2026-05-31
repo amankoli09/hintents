@@ -25,7 +25,10 @@ pub struct HarnessContext {
 
 impl HarnessContext {
     /// Applies control-command side effects and returns human-readable log lines.
-    pub fn apply_control_command(&mut self, request: &SimulationRequest) -> Result<Vec<String>, SimulationContextError> {
+    pub fn apply_control_command(
+        &mut self,
+        request: &SimulationRequest,
+    ) -> Result<Vec<String>, SimulationContextError> {
         let mut logs = Vec::new();
 
         let Some(command) = request.control_command.as_deref() else {
