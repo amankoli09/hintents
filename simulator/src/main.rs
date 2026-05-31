@@ -640,7 +640,6 @@ fn main() {
     }
 
     let diagnostic_events: Vec<DiagnosticEvent> = vec![];
-    let mut categorized_events: Vec<CategorizedEvent> = vec![];
 
     match result {
         Ok(Ok(exec_logs)) => {
@@ -702,7 +701,7 @@ fn main() {
                     ),
                 };
 
-            categorized_events = match host.get_events() {
+            let categorized_events = match host.get_events() {
                 Ok(evs) => categorize_events(&evs, Some(cpu_insns), Some(mem_bytes)),
                 Err(_) => vec![],
             };
