@@ -139,11 +139,24 @@ impl SourceMapCache {
         self
     }
 
-    /// Gets the default cache directory (~/.erst/cache/sourcemaps)
+    /// Gets the default cache directory (~/.erst/cache/sourcemaps).
+    /// Falls back to the OS temp directory when the home directory is unavailable.
     fn get_default_cache_dir() -> Result<PathBuf, String> {
-        let home_dir =
-            dirs::home_dir().ok_or_else(|| "Failed to determine home directory".to_string())?;
-        Ok(home_dir.join(".erst").join("cache").join(CACHE_DIR_NAME))
+        if let Some(home_dir) = dirs::home_dir() {
+            return Ok(home_dir.join(".erst").join("cache").join(CACHE_DIR_NAME));
+        }
+        // Home directory unavailable; use the OS temp directory as a fallback.
+        let temp_cache = std::env::temp_dir()
+            .join("erst")
+            .join("cache")
+            .join(CACHE_DIR_NAME);
+        fs::create_dir_all(&temp_cache).map_err(|e| {
+            format!(
+                "Failed to create cache directory in temp dir {:?}: {e}",
+                temp_cache
+            )
+        })?;
+        Ok(temp_cache)
     }
 
     /// Computes SHA256 hash of WASM bytes
@@ -452,7 +465,16 @@ impl SourceMapCache {
 
 impl Default for SourceMapCache {
     fn default() -> Self {
-        Self::new().expect("Failed to create default source map cache")
+        Self::new().unwrap_or_else(|e| {
+            eprintln!("Warning: source map cache unavailable ({e}); falling back to temp directory");
+            Self {
+                cache_dir: std::env::temp_dir()
+                    .join("erst")
+                    .join("cache")
+                    .join(CACHE_DIR_NAME),
+                max_cache_size: None,
+            }
+        })
     }
 }
 
