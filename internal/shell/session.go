@@ -82,13 +82,15 @@ func (s *Session) Invoke(ctx context.Context, contractID, function string, args 
 		return nil, fmt.Errorf("failed to build envelope: %w", err)
 	}
 
-	// Create simulation request
+	// Create simulation request with snapshots enabled so updateLedgerState
+	// can read post-execution ledger entry diffs from the response.
 	req := &simulator.SimulationRequest{
-		EnvelopeXdr:    envelopeXDR,
-		ResultMetaXdr:  "",
-		LedgerEntries:  s.ledgerEntries,
-		Timestamp:      s.timestamp,
-		LedgerSequence: s.ledgerSequence,
+		EnvelopeXdr:     envelopeXDR,
+		ResultMetaXdr:   "",
+		LedgerEntries:   s.ledgerEntries,
+		Timestamp:       s.timestamp,
+		LedgerSequence:  s.ledgerSequence,
+		EnableSnapshots: true,
 	}
 
 	// Execute simulation
@@ -196,12 +198,12 @@ func (s *Session) buildInvocationEnvelope(contractID, function string, args []st
 	return base64.StdEncoding.EncodeToString(envBytes), nil
 }
 
-// updateLedgerState updates the session's ledger state based on simulation results
+// updateLedgerState updates the session's ledger state based on simulation results.
+// It parses ledger entry diffs from the simulator's inline snapshot payload and
+// merges them into s.ledgerEntries to maintain persistent shell session state.
 func (s *Session) updateLedgerState(resp *simulator.SimulationResponse) {
-	// Increment ledger sequence
 	s.ledgerSequence++
 
-	// Update timestamp
 	now := time.Now().Unix()
 	if now <= s.timestamp {
 		now = s.timestamp + 1
@@ -211,8 +213,19 @@ func (s *Session) updateLedgerState(resp *simulator.SimulationResponse) {
 	}
 	s.timestamp = now
 
-	// TODO: Extract and update ledger entries from simulation response
-	// This would involve parsing the ResultMetaXDR to get state changes
+	if resp.OptimizationReport == nil || resp.OptimizationReport.Snapshots == nil {
+		return
+	}
+
+	// Each inline snapshot contains ledger entry pairs: [keyXDR_b64, entryXDR_b64].
+	// Merge all snapshots so the session reflects the post-simulation state.
+	for _, snapshot := range resp.OptimizationReport.Snapshots.Inline {
+		for _, pair := range snapshot.LedgerEntries {
+			if len(pair) == 2 {
+				s.ledgerEntries[pair[0]] = pair[1]
+			}
+		}
+	}
 }
 
 // GetStateSummary returns a summary of the current ledger state
