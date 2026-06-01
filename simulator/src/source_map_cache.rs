@@ -601,11 +601,17 @@ mod tests {
 
         cache.store(entry).unwrap();
 
-        assert!(cache.get_with_mtime(&cache_key, Some(mtime1), false).is_some());
-        assert!(cache.get_with_mtime(&cache_key, Some(mtime2), false).is_none());
+        assert!(cache
+            .get_with_mtime(&cache_key, Some(mtime1), false)
+            .is_some());
+        assert!(cache
+            .get_with_mtime(&cache_key, Some(mtime2), false)
+            .is_none());
 
         let new_key = SourceMapCache::compute_cache_key(&wasm_bytes, Some(mtime2));
-        assert!(cache.get_with_mtime(&new_key, Some(mtime2), false).is_none());
+        assert!(cache
+            .get_with_mtime(&new_key, Some(mtime2), false)
+            .is_none());
     }
 
     #[test]
