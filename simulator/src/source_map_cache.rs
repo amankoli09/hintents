@@ -466,7 +466,9 @@ impl SourceMapCache {
 impl Default for SourceMapCache {
     fn default() -> Self {
         Self::new().unwrap_or_else(|e| {
-            eprintln!("Warning: source map cache unavailable ({e}); falling back to temp directory");
+            eprintln!(
+                "Warning: source map cache unavailable ({e}); falling back to temp directory"
+            );
             Self {
                 cache_dir: std::env::temp_dir()
                     .join("erst")
