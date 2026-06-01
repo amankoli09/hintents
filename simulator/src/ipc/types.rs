@@ -4,6 +4,23 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum IpcError {
+    #[error("IPC IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("IPC JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
+    /// Returned when `start_ipc_bridge` cannot bind to the requested address
+    /// (e.g. port already in use). Exit code 102 is the CLI convention for
+    /// port-binding failures.
+    #[error("{0} (error code 102: port binding failed)")]
+    PortBindingFailed(String),
+}
+
 
 /// Identifies the kind of streaming frame emitted to stdout.
 #[allow(dead_code)]
@@ -143,20 +160,20 @@ pub fn emit_final_frame(seq: u32, data: serde_json::Value) {
 }
 
 #[allow(dead_code)]
-pub fn handle_stdin_command(registry: &SnapshotRegistry) {
+pub fn parse_command_frame(input: &str) -> Result<CommandFrame, IpcError> {
+    let cmd: CommandFrame = serde_json::from_str(input)?;
+    Ok(cmd)
+}
+
+#[allow(dead_code)]
+pub fn handle_stdin_command(registry: &SnapshotRegistry) -> Result<(), IpcError> {
     use std::io::BufRead;
     let stdin = std::io::stdin();
     let mut line = String::new();
-    if stdin.lock().read_line(&mut line).unwrap_or(0) == 0 {
-        return;
+    if stdin.lock().read_line(&mut line)? == 0 {
+        return Ok(());
     }
-    let cmd: CommandFrame = match serde_json::from_str(line.trim()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("ipc: failed to parse command: {e}");
-            return;
-        }
-    };
+    let cmd = parse_command_frame(line.trim())?;
     match cmd.op {
         CommandOpcode::FetchSnapshot => {
             let snapshots = registry.fetch(cmd.id, cmd.batch_size);
@@ -165,14 +182,11 @@ pub fn handle_stdin_command(registry: &SnapshotRegistry) {
                 seq: cmd.id,
                 data: FetchResponseData { snapshots },
             };
-            match serde_json::to_string(&response) {
-                Ok(json_line) => {
-                    let stdout = std::io::stdout();
-                    let mut handle = stdout.lock();
-                    let _ = writeln!(handle, "{json_line}");
-                }
-                Err(e) => eprintln!("ipc: failed to serialize fetch response: {e}"),
-            }
+            let json_line = serde_json::to_string(&response)?;
+            let stdout = std::io::stdout();
+            let mut handle = stdout.lock();
+            writeln!(handle, "{json_line}")?;
         }
     }
+    Ok(())
 }

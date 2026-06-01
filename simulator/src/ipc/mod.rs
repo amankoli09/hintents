@@ -5,6 +5,25 @@ pub mod decompress;
 pub mod types;
 pub mod validate;
 
+pub use types::IpcError;
+
+/// Binds a TCP listener to `addr` and returns it.
+///
+/// If the socket cannot be established (e.g. the port is already in use or
+/// the address is invalid) the function returns an `Err(IpcError::PortBindingFailed)`
+/// with a human-readable message so the CLI can report the failure instead
+/// of unwinding the stack with a panic.
+#[allow(dead_code)]
+pub fn start_ipc_bridge<A: std::net::ToSocketAddrs>(
+    addr: A,
+) -> Result<std::net::TcpListener, IpcError> {
+    std::net::TcpListener::bind(addr).map_err(|e| {
+        IpcError::PortBindingFailed(format!(
+            "IPC bridge could not bind to the requested address: {e}"
+        ))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::types::*;
@@ -84,5 +103,36 @@ mod tests {
     fn test_command_frame_default_batch_size() {
         let cmd: CommandFrame = serde_json::from_str(r#"{"op":"FETCH_SNAPSHOT","id":7}"#).unwrap();
         assert_eq!(cmd.batch_size, 1);
+    }
+
+    #[test]
+    fn test_parse_command_frame_invalid_json_returns_error() {
+        let result = parse_command_frame("{invalid-json}");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_start_ipc_bridge_success() {
+        // port 0 lets the OS pick a free port — always succeeds
+        let result = super::start_ipc_bridge("127.0.0.1:0");
+        assert!(result.is_ok(), "expected successful bind: {:?}", result);
+    }
+
+    #[test]
+    fn test_start_ipc_bridge_bad_address_returns_error() {
+        // Bind two listeners to the same port to force EADDRINUSE
+        let first = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = first.local_addr().unwrap().port();
+        let addr = format!("127.0.0.1:{port}");
+        let result = super::start_ipc_bridge(addr.as_str());
+        assert!(
+            result.is_err(),
+            "expected Err when port is already bound, got Ok"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("IPC bridge could not bind"),
+            "unexpected error message: {err_msg}"
+        );
     }
 }
