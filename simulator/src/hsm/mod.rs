@@ -117,7 +117,7 @@ impl SignerFactory {
                 Ok(Box::new(pkcs11_signer))
             }
             "mock" => {
-                let mock_config = config.mock.clone().unwrap_or_default();
+                let mock_config = config.mock.clone().unwrap_or_else(|| MockHsmConfig::default());
                 let mock_hsm = mock::MockHsm::from_config(&mock_config)?;
                 Ok(Box::new(mock_hsm))
             }
@@ -330,7 +330,8 @@ mod tests {
         std::env::remove_var("ERST_SIGNER_TYPE");
         std::env::remove_var("ERST_SIGNER_ALGORITHM");
 
-        let config = SignerConfig::from_env().unwrap();
+        let config = SignerConfig::from_env()
+            .expect("SignerConfig::from_env should succeed with default values");
         assert_eq!(config.signer_type, "software");
         assert_eq!(config.algorithm, "ed25519");
 
