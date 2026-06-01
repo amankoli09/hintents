@@ -3,6 +3,9 @@
 .PHONY: build test lint validate-errors clean bench bench-rpc bench-sim bench-profile bench-perf-regression
 .PHONY: fmt fmt-go fmt-rust pre-commit
 
+# Enable parallel target execution where supported
+MAKEFLAGS += -j4
+
 # Build variables
 VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT_SHA?=$(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
