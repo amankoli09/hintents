@@ -6,8 +6,8 @@ pub mod types;
 pub mod validate;
 
 pub use types::{
-    BridgeControlCommand, CommandFrame, CommandOpcode, FrameType, SnapshotEntry, SnapshotRegistry,
-    StreamFrame, emit_final_frame, emit_snapshot_frame, handle_stdin_command,
+    emit_final_frame, emit_snapshot_frame, handle_stdin_command, BridgeControlCommand,
+    CommandFrame, CommandOpcode, FrameType, SnapshotEntry, SnapshotRegistry, StreamFrame,
 };
 
 #[cfg(test)]
