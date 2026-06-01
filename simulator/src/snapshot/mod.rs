@@ -234,6 +234,44 @@ impl LedgerSnapshot {
             None => self.base.get(key),       // not overridden; check base
         }
     }
+
+    /// Creates a forked snapshot optimized for sharing read-only state.
+    ///
+    /// This method merges the current delta into the base (creating a new Arc)
+    /// and returns a new snapshot with an empty delta. This is much more efficient
+    /// than cloning the entire snapshot when the delta is large, as it avoids
+    /// copying the delta HashMap. The new snapshot shares the merged base with
+    /// the original via Arc, making subsequent clones cheap.
+    ///
+    /// Use this instead of `clone()` when capturing snapshots for rollback or
+    /// versioning purposes.
+    pub fn fork(&self) -> Self {
+        // If delta is empty, just clone the Arc (cheap)
+        if self.delta.is_empty() {
+            return Self {
+                base: Arc::clone(&self.base),
+                delta: HashMap::new(),
+            };
+        }
+
+        // Merge delta into base to create a new shared base
+        let mut merged = (*self.base).clone();
+        for (key, value) in &self.delta {
+            match value {
+                Some(entry) => {
+                    merged.insert(key.clone(), entry.clone());
+                }
+                None => {
+                    merged.remove(key);
+                }
+            }
+        }
+
+        Self {
+            base: Arc::new(merged),
+            delta: HashMap::new(),
+        }
+    }
 }
 
 impl Default for LedgerSnapshot {
