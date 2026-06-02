@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use tracing::{error, info};
 use wasmparser::{ExternalKind, Operator, Parser, Payload, TypeRef, ValType};
 
 #[derive(Debug, thiserror::Error)]
@@ -36,6 +37,11 @@ pub fn run_repl(wasm_path: &Path, initial_function: Option<&str>) -> Result<(), 
         session.select_function(selection)?;
     }
 
+    // Informational messages go through the configured logger
+    info!("loaded_wasm = {}", wasm_path.display());
+    info!("selected_function = {}", session.current_function_label());
+
+    // User-facing banner stays on stdout
     println!("Loaded {}", wasm_path.display());
     println!("Selected {}", session.current_function_label());
     println!("Type 'help' for commands.");
@@ -56,17 +62,23 @@ pub fn run_repl(wasm_path: &Path, initial_function: Option<&str>) -> Result<(), 
             break;
         }
 
-        match session.handle_command(line.trim())? {
-            CommandOutcome::Continue(message) => {
+        match session.handle_command(line.trim()) {
+            Ok(CommandOutcome::Continue(message)) => {
                 if !message.is_empty() {
                     println!("{message}");
                 }
             }
-            CommandOutcome::Exit(message) => {
+            Ok(CommandOutcome::Exit(message)) => {
                 if !message.is_empty() {
                     println!("{message}");
                 }
                 break;
+            }
+            Err(err) => {
+                // Send structured error to stderr via the logger and a simple
+                // human-readable message to the terminal user.
+                error!("repl_error = {:?}", err);
+                eprintln!("error: {err}");
             }
         }
     }
