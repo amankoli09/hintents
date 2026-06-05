@@ -117,7 +117,7 @@ impl SignerFactory {
                 Ok(Box::new(pkcs11_signer))
             }
             "mock" => {
-                let mock_config = config.mock.clone().unwrap_or_else(|| MockHsmConfig::default());
+                let mock_config = config.mock.clone().unwrap_or_default();
                 let mock_hsm = mock::MockHsm::from_config(&mock_config)?;
                 Ok(Box::new(mock_hsm))
             }
